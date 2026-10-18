@@ -10,22 +10,14 @@
 
 需要 Node.js 22 或更新版本，以及 [DeepSeek API Key](https://platform.deepseek.com/api_keys)。
 
-先下载并安装依赖：
-
-```sh
-git clone https://github.com/habitssss/deepseek-web-mcp.git
-cd deepseek-web-mcp
-npm ci
-```
-
-在支持 stdio MCP 的客户端配置中添加以下内容。请将路径改为实际的绝对路径，并通过客户端的密钥管理功能设置 `DEEPSEEK_API_KEY`。如果客户端不提供密钥管理，可以在私有本地配置的 `env` 中填写，不能提交到 Git。
+在支持 stdio MCP 的客户端配置中添加以下内容。客户端会通过 `npx` 下载并启动 npm 包，无需单独安装。请通过客户端的密钥管理功能设置 `DEEPSEEK_API_KEY`。如果客户端不提供密钥管理，可以在私有本地配置的 `env` 中填写，不能提交到 Git。
 
 ```json
 {
   "mcpServers": {
     "deepseek-web": {
-      "command": "node",
-      "args": ["/absolute/path/deepseek-web-mcp/cli.js"],
+      "command": "npx",
+      "args": ["-y", "deepseek-web-mcp@0.1.0"],
       "env": {
         "DEEPSEEK_API_KEY": "YOUR_DEEPSEEK_API_KEY"
       }
@@ -98,5 +90,15 @@ npm run test:live
 实际测试会启动 CLI，通过 MCP stdio 完成握手，再分别调用 Search 和 Fetch。它检查搜索结果及官方文档正文，会产生两次 API 请求费用。测试只输出数量、长度和耗时，不输出密钥。
 
 ## 开发
+
+从源码运行时，先下载并安装依赖：
+
+```sh
+git clone https://github.com/habitssss/deepseek-web-mcp.git
+cd deepseek-web-mcp
+npm ci
+```
+
+然后将 MCP 配置中的启动方式改为 `"command": "node"` 和 `"args": ["/absolute/path/deepseek-web-mcp/cli.js"]`，路径使用实际的绝对路径。
 
 代码使用 JavaScript ES modules，无需构建。`server.js` 定义工具及 API 请求，`cli.js` 提供 stdio 入口。修改后运行 `npm test`；修改 API 参数或返回值处理时，还应运行实际 API 测试。

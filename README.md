@@ -10,20 +10,14 @@ This is a community project, not an official DeepSeek product. It is licensed un
 
 You need Node.js 22 or newer and a [DeepSeek API key](https://platform.deepseek.com/api_keys).
 
-```sh
-git clone https://github.com/habitssss/deepseek-web-mcp.git
-cd deepseek-web-mcp
-npm ci
-```
-
-Add the server to an MCP client that supports stdio. Replace the path with the absolute path to your checkout. Set `DEEPSEEK_API_KEY` through your client's secret manager if available. Otherwise, keep the key in a private local configuration file and never commit it to Git.
+Add the server to an MCP client that supports stdio. The client downloads and runs the npm package with `npx`; no separate installation is needed. Set `DEEPSEEK_API_KEY` through your client's secret manager if available. Otherwise, keep the key in a private local configuration file and never commit it to Git.
 
 ```json
 {
   "mcpServers": {
     "deepseek-web": {
-      "command": "node",
-      "args": ["/absolute/path/deepseek-web-mcp/cli.js"],
+      "command": "npx",
+      "args": ["-y", "deepseek-web-mcp@0.1.0"],
       "env": {
         "DEEPSEEK_API_KEY": "YOUR_DEEPSEEK_API_KEY"
       }
@@ -101,5 +95,15 @@ npm run test:live
 The live test starts the CLI, completes the MCP stdio handshake, and calls both tools. It verifies search results and the fetched official documentation. It makes two billable API requests and prints counts, content length, and elapsed time without printing the key.
 
 ## Development
+
+To run from source:
+
+```sh
+git clone https://github.com/habitssss/deepseek-web-mcp.git
+cd deepseek-web-mcp
+npm ci
+```
+
+For a source checkout, use `"command": "node"` and `"args": ["/absolute/path/deepseek-web-mcp/cli.js"]` in your MCP configuration instead of `npx`.
 
 The code uses JavaScript ES modules and needs no build step. `server.js` defines the tools and API requests. `cli.js` starts the stdio transport. Run `npm test` after changes, and run the live test when changing API arguments or response handling.
