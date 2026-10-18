@@ -1,5 +1,9 @@
 # DeepSeek Web MCP
 
+<p align="center">
+  <img src="assets/logo.png" alt="DeepSeek Web MCP whale and search logo" width="160" height="160">
+</p>
+
 English | [中文](README.zh-CN.md)
 
 An MCP server that calls DeepSeek's official Search and Fetch APIs directly. It returns search results and page content without calling a chat model to generate an answer.

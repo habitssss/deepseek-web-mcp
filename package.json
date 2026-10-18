@@ -11,7 +11,7 @@
   "bin": {
     "deepseek-web-mcp": "cli.js"
   },
-  "files": ["cli.js", "server.js", "scripts/", "test/", "README*.md", "LICENSE"],
+  "files": ["cli.js", "server.js", "assets/", "scripts/", "test/", "README*.md", "LICENSE"],
   "engines": { "node": ">=22" },
   "scripts": {
     "start": "node cli.js",

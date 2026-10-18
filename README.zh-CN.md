@@ -1,5 +1,9 @@
 # DeepSeek Web MCP
 
+<p align="center">
+  <img src="assets/logo.png" alt="DeepSeek Web MCP 鲸鱼与搜索标志" width="160" height="160">
+</p>
+
 [English](README.md) | 中文
 
 一个直接调用 DeepSeek 官方 Search 和 Fetch API 的 MCP 服务。它返回搜索结果和网页正文，不调用聊天模型生成答案。
