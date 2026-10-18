@@ -1,0 +1,25 @@
+{
+  "name": "deepseek-web-mcp",
+  "version": "0.1.0",
+  "description": "MCP tools for DeepSeek's Search and Fetch APIs, without model-generated answers.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/habitssss/deepseek-web-mcp.git"
+  },
+  "bin": {
+    "deepseek-web-mcp": "cli.js"
+  },
+  "files": ["cli.js", "server.js", "scripts/", "test/", "README*.md", "LICENSE"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node cli.js",
+    "test": "node --test",
+    "test:live": "node scripts/smoke.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^4.6.7"
+  }
+}
