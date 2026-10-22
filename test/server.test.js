@@ -6,8 +6,8 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createServer } from '../server.js';
 
-async function connect(t, fetchImpl) {
-  const server = createServer({ apiKey: 'test-only-key', fetchImpl });
+async function connect(t, fetchImpl, options = {}) {
+  const server = createServer({ apiKey: 'test-only-key', fetchImpl, ...options });
   const client = new Client({ name: 'test-client', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   t.after(async () => { await client.close(); await server.close(); });
@@ -90,14 +90,14 @@ test('invalid arguments fail before an upstream request', async (t) => {
   assert.equal(calls, 0);
 });
 
-test('HTTP and transport errors do not leak upstream bodies or retry billable requests', async (t) => {
+test('HTTP and transport errors do not leak upstream bodies', async (t) => {
   let status = 401;
   let calls = 0;
   const client = await connect(t, async () => {
     calls++;
     if (status === 0) throw new Error('secret-in-network-error');
     return new Response('secret-in-upstream-body', { status });
-  });
+  }, { retryDelayMs: 0 });
   for (status of [401, 402, 404, 429, 500]) {
     const result = await client.callTool({ name: 'fetch', arguments: { url: 'https://example.com' } });
     assert.equal(result.isError, true);
@@ -108,7 +108,79 @@ test('HTTP and transport errors do not leak upstream bodies or retry billable re
   const result = await client.callTool({ name: 'search', arguments: { query: 'test' } });
   assert.equal(result.isError, true);
   assert.doesNotMatch(JSON.stringify(result), /secret-in-/);
-  assert.equal(calls, 6);
+  // 401, 402 and 404 fail once; 429 and 500 are retried twice; a transport error is not retried.
+  assert.equal(calls, 10);
+});
+
+test('retryable failures are retried and the successful response is returned', async (t) => {
+  let calls = 0;
+  const client = await connect(t, async () => {
+    calls++;
+    if (calls === 1) return new Response('', { status: 429, headers: { 'Retry-After': '0' } });
+    if (calls === 2) return new Response('', { status: 503 });
+    return Response.json({ results: [] });
+  }, { retryDelayMs: 0 });
+  const result = await client.callTool({ name: 'search', arguments: { query: 'retry' } });
+  assert.equal(calls, 3);
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(result.structuredContent, { results: [] });
+});
+
+test('retries stop after two attempts and report the last status', async (t) => {
+  let calls = 0;
+  const client = await connect(t, async () => {
+    calls++;
+    return new Response('', { status: 500 });
+  }, { retryDelayMs: 0 });
+  const result = await client.callTool({ name: 'fetch', arguments: { url: 'https://example.com' } });
+  assert.equal(calls, 3);
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /HTTP 500/);
+});
+
+test('non-retryable failures are not retried', async (t) => {
+  for (const status of [400, 401, 402, 403, 404]) {
+    let calls = 0;
+    const client = await connect(t, async () => {
+      calls++;
+      return new Response('', { status });
+    }, { retryDelayMs: 0 });
+    const result = await client.callTool({ name: 'fetch', arguments: { url: 'https://example.com' } });
+    assert.equal(calls, 1);
+    assert.equal(result.isError, true);
+  }
+});
+
+test('identical successful calls reuse the cached response', async (t) => {
+  let calls = 0;
+  const client = await connect(t, async () => {
+    calls++;
+    return Response.json({ results: [] });
+  }, { cacheTtlMs: 60_000 });
+  await client.callTool({ name: 'search', arguments: { query: 'cached' } });
+  await client.callTool({ name: 'search', arguments: { query: 'cached' } });
+  await client.callTool({ name: 'search', arguments: { query: 'different' } });
+  assert.equal(calls, 2);
+});
+
+test('the cache can be disabled and never stores failures', async (t) => {
+  let successes = 0;
+  const disabled = await connect(t, async () => {
+    successes++;
+    return Response.json({ results: [] });
+  }, { cacheTtlMs: 0 });
+  await disabled.callTool({ name: 'fetch', arguments: { url: 'https://example.com' } });
+  await disabled.callTool({ name: 'fetch', arguments: { url: 'https://example.com' } });
+  assert.equal(successes, 2);
+
+  let failures = 0;
+  const retrying = await connect(t, async () => {
+    failures++;
+    return new Response('', { status: 404 });
+  }, { retryDelayMs: 0, cacheTtlMs: 60_000 });
+  await retrying.callTool({ name: 'fetch', arguments: { url: 'https://example.com' } });
+  await retrying.callTool({ name: 'fetch', arguments: { url: 'https://example.com' } });
+  assert.equal(failures, 2);
 });
 
 test('malformed upstream responses are tool errors, not successful content', async (t) => {

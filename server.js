@@ -56,9 +56,67 @@ const httpErrors = {
   504: 'DeepSeek upstream request timed out.',
 };
 
-export function createServer({ apiKey, fetchImpl = globalThis.fetch }) {
+const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
+const MAX_RETRIES = 2;
+const MAX_RETRY_AFTER_MS = 5_000;
+const MAX_CACHE_ENTRIES = 50;
+const MAX_CACHE_ENTRY_CHARS = 512 * 1024;
+
+async function waitBeforeRetry(response, attempt, baseDelayMs, signal) {
+  const header = response.headers.get('retry-after')?.trim();
+  const seconds = header && /^\d+$/.test(header) ? Number(header) : NaN;
+  const delayMs = Number.isFinite(seconds)
+    ? Math.min(seconds * 1000, MAX_RETRY_AFTER_MS)
+    : baseDelayMs * 2 ** attempt;
+
+  await new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new Error('aborted'));
+      return;
+    }
+    const onAbort = () => { clearTimeout(timer); reject(new Error('aborted')); };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, delayMs);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+export function createServer({
+  apiKey,
+  fetchImpl = globalThis.fetch,
+  cacheTtlMs = 10 * 60_000,
+  retryDelayMs = 500,
+}) {
   if (typeof apiKey !== 'string' || !apiKey.trim() || /[\r\n]/.test(apiKey)) {
     throw new Error('Set DEEPSEEK_API_KEY to your DeepSeek API key.');
+  }
+
+  const cache = cacheTtlMs > 0 ? new Map() : null;
+
+  function readCache(key) {
+    if (!cache) return null;
+    const entry = cache.get(key);
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+      cache.delete(key);
+      return null;
+    }
+    return entry.data;
+  }
+
+  function writeCache(key, data) {
+    if (!cache) return;
+    let serialized;
+    try {
+      serialized = JSON.stringify(data);
+    } catch {
+      return;
+    }
+    if (serialized.length > MAX_CACHE_ENTRY_CHARS) return;
+    if (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value);
+    cache.set(key, { data, expiresAt: Date.now() + cacheTtlMs });
   }
 
   const server = new McpServer(
@@ -67,40 +125,56 @@ export function createServer({ apiKey, fetchImpl = globalThis.fetch }) {
   );
 
   async function callApi(tool, args, schema, signal) {
-    const timeout = AbortSignal.timeout(30_000);
-    try {
-      const response = await fetchImpl(`https://api.deepseek.com/v1/tools/${tool}`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey.trim()}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify(args),
-        redirect: 'error',
-        signal: AbortSignal.any([signal, timeout]),
-      });
-      if (!response.ok) {
-        await response.body?.cancel();
-        return {
-          isError: true,
-          content: [{ type: 'text', text: `DeepSeek HTTP ${response.status}: ${httpErrors[response.status] ?? 'Request failed.'}` }],
-        };
-      }
-      const data = schema.parse(await response.json());
+    const cacheKey = `${tool}\0${JSON.stringify(Object.keys(args).sort().map((key) => [key, args[key]]))}`;
+    const cached = readCache(cacheKey);
+    if (cached) {
       return {
-        content: [{ type: 'text', text: JSON.stringify(data) }],
-        structuredContent: data,
+        content: [{ type: 'text', text: JSON.stringify(cached) }],
+        structuredContent: cached,
       };
-    } catch (error) {
-      let message = 'Could not reach the DeepSeek API.';
-      if (signal.aborted) message = 'Request cancelled.';
-      else if (timeout.aborted) message = 'DeepSeek request timed out after 30 seconds.';
-      else if (error instanceof SyntaxError || error instanceof z.ZodError) {
-        message = 'DeepSeek returned an invalid response.';
+    }
+
+    for (let attempt = 0; ; attempt++) {
+      const timeout = AbortSignal.timeout(30_000);
+      try {
+        const response = await fetchImpl(`https://api.deepseek.com/v1/tools/${tool}`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey.trim()}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify(args),
+          redirect: 'error',
+          signal: AbortSignal.any([signal, timeout]),
+        });
+        if (!response.ok) {
+          await response.body?.cancel();
+          if (RETRYABLE_STATUS_CODES.has(response.status) && attempt < MAX_RETRIES) {
+            await waitBeforeRetry(response, attempt, retryDelayMs, signal);
+            continue;
+          }
+          return {
+            isError: true,
+            content: [{ type: 'text', text: `DeepSeek HTTP ${response.status}: ${httpErrors[response.status] ?? 'Request failed.'}` }],
+          };
+        }
+        const data = schema.parse(await response.json());
+        writeCache(cacheKey, data);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(data) }],
+          structuredContent: data,
+        };
+      } catch (error) {
+        let message = 'Could not reach the DeepSeek API.';
+        if (signal.aborted) message = 'Request cancelled.';
+        else if (timeout.aborted) message = 'DeepSeek request timed out after 30 seconds.';
+        else if (error instanceof SyntaxError || error instanceof z.ZodError) {
+          message = 'DeepSeek returned an invalid response.';
+        }
+        // Do not return upstream error bodies or exception messages that may contain credentials.
+        return { isError: true, content: [{ type: 'text', text: message }] };
       }
-      // Do not return upstream error bodies or exception messages that may contain credentials.
-      return { isError: true, content: [{ type: 'text', text: message }] };
     }
   }
 

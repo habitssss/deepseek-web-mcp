@@ -76,7 +76,11 @@ Both tools return MCP `structuredContent` and the same JSON as text for clients 
 
 Search queries, original questions, localization IPs, and target URLs are sent to DeepSeek. Authentication uses the `DEEPSEEK_API_KEY` environment variable. The server does not store the key or log request content. Standard output is reserved for MCP messages.
 
-Each tool call sends one API request. There are no automatic retries. Requests time out after 30 seconds and respond to client cancellation. A timeout or cancellation does not guarantee that DeepSeek stops processing the request.
+Requests time out after 30 seconds and respond to client cancellation. A timeout or cancellation does not guarantee that DeepSeek stops processing the request.
+
+Transient failures are retried automatically: HTTP 408, 429, 500, 502, 503, and 504 are retried up to twice with exponential backoff (500 ms, then 1 s), and a numeric `Retry-After` header overrides the backoff, capped at 5 seconds. Other 4xx responses, timeouts, and transport errors are returned immediately without a retry. DeepSeek bills only successful requests, so a retried call costs nothing extra unless it eventually succeeds.
+
+Successful responses are cached in memory for 10 minutes, so repeating an identical search or fetch inside one session sends no second request. Set `DEEPSEEK_WEB_MCP_CACHE_TTL_MS` to change the window in milliseconds, or to `0` to disable caching. The cache is per server process and never stores failures; responses larger than 512 KB are not cached.
 
 DeepSeek lists both Search and Fetch at USD 0.75 per 1,000 successful requests that produce results. Check the [official guide](https://api-docs.deepseek.com/guides/search) for current prices and limits. Free usage arrangements for products such as DeepSeek Harness do not imply that this server's direct API requests are free.
 
